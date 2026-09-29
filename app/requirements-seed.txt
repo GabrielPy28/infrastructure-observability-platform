@@ -1,0 +1,2 @@
+# Solo para generar la base de datos (etapa "seed" del Dockerfile)
+faker==40.40.0

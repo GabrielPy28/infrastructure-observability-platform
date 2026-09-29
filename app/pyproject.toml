@@ -1,0 +1,17 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S"]
+# B008: Depends()/Query() en defaults es el patrón de FastAPI.
+# S608: el SQL se compone con fragmentos definidos en código; los valores van parametrizados.
+ignore = ["B008", "S608"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]
+"seed/*" = ["S311"]
