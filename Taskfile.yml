@@ -1,0 +1,76 @@
+version: "3"
+
+vars:
+  APP_DIR: app
+  IMAGE: observability-api
+  TAG:
+    sh: git rev-parse --short HEAD
+  VENV_BIN: '{{if eq OS "windows"}}.venv/Scripts{{else}}.venv/bin{{end}}'
+  PYTHON: '{{if eq OS "windows"}}py -3{{else}}python3{{end}}'
+
+tasks:
+  default:
+    cmds:
+      - task --list
+    silent: true
+
+  # --- Aplicación ---
+  app:install:
+    desc: Crea el entorno virtual e instala dependencias de desarrollo
+    dir: "{{.APP_DIR}}"
+    cmds:
+      - "{{.PYTHON}} -m venv .venv"
+      - "{{.VENV_BIN}}/python -m pip install -q --upgrade pip"
+      - "{{.VENV_BIN}}/python -m pip install -q -r requirements-dev.txt"
+    status:
+      - test -d .venv
+
+  app:lint:
+    desc: Lint y verificación de formato (ruff)
+    dir: "{{.APP_DIR}}"
+    deps: [app:install]
+    cmds:
+      - "{{.VENV_BIN}}/ruff check ."
+      - "{{.VENV_BIN}}/ruff format --check ."
+
+  app:format:
+    desc: Aplica el formato de ruff
+    dir: "{{.APP_DIR}}"
+    deps: [app:install]
+    cmds:
+      - "{{.VENV_BIN}}/ruff format ."
+      - "{{.VENV_BIN}}/ruff check --fix ."
+
+  app:test:
+    desc: Ejecuta los tests
+    dir: "{{.APP_DIR}}"
+    deps: [app:install]
+    cmds:
+      - "{{.VENV_BIN}}/python -m pytest"
+
+  app:seed:
+    desc: Genera la base de datos local en app/data/infra.db
+    dir: "{{.APP_DIR}}"
+    deps: [app:install]
+    cmds:
+      - "{{.VENV_BIN}}/python -m seed.generate --output data/infra.db"
+
+  app:run:
+    desc: Ejecuta la API en local con recarga automática (http://localhost:8000/docs)
+    dir: "{{.APP_DIR}}"
+    deps: [app:seed]
+    cmds:
+      - "{{.VENV_BIN}}/uvicorn src.main:app --reload --port 8000"
+
+  # --- Docker ---
+  docker:build:
+    desc: Construye la imagen etiquetada con el SHA del commit actual
+    dir: "{{.APP_DIR}}"
+    cmds:
+      - docker build --build-arg APP_VERSION={{.TAG}} -t {{.IMAGE}}:{{.TAG}} .
+
+  docker:run:
+    desc: Ejecuta la imagen como lo hará Kubernetes (solo lectura, no-root)
+    deps: [docker:build]
+    cmds:
+      - docker run --rm --read-only --tmpfs /tmp -p 8000:8000 {{.IMAGE}}:{{.TAG}}
