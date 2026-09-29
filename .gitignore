@@ -1,0 +1,45 @@
+# --- Documentos internos (no públicos) ---
+brife.md
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- SQLite (se genera en el build de la imagen, nunca se versiona) ---
+*.db
+*.sqlite
+*.sqlite3
+
+# --- Terraform ---
+# .terraform.lock.hcl SÍ se versiona (fija versiones de providers)
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+*.tfvars
+!*.tfvars.example
+override.tf
+override.tf.json
+*_override.tf
+
+# --- Kubernetes ---
+kubeconfig
+*.kubeconfig
+
+# --- Secretos locales ---
+.env
+.env.*
+!.env.example
+
+# --- Editor / SO ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
