@@ -3,8 +3,14 @@ version: "3"
 vars:
   APP_DIR: app
   IMAGE: observability-api
+  # SHA del commit; "-dirty" si hay cambios sin commitear (la imagen no es reproducible).
   TAG:
-    sh: git rev-parse --short HEAD
+    sh: git describe --always --dirty --abbrev=7
+  CLUSTER: devops-platform
+  # Contexto explícito en cada kubectl: nunca se opera por accidente sobre otro cluster.
+  KUBE_CONTEXT: kind-devops-platform
+  ENV: '{{.ENV | default "dev"}}'
+  NAMESPACE: observability-{{.ENV}}
   VENV_BIN: '{{if eq OS "windows"}}.venv/Scripts{{else}}.venv/bin{{end}}'
   PYTHON: '{{if eq OS "windows"}}py -3{{else}}python3{{end}}'
 
@@ -74,3 +80,55 @@ tasks:
     deps: [docker:build]
     cmds:
       - docker run --rm --read-only --tmpfs /tmp -p 8000:8000 {{.IMAGE}}:{{.TAG}}
+
+  # --- Kubernetes (Kind) ---
+  k8s:cluster:create:
+    desc: Crea el cluster Kind del proyecto (en la Fase 3 lo hará Terraform)
+    cmds:
+      - kind create cluster --name {{.CLUSTER}} --wait 90s
+    status:
+      - kubectl config get-contexts {{.KUBE_CONTEXT}}
+
+  k8s:cluster:delete:
+    desc: Elimina el cluster Kind del proyecto
+    cmds:
+      - kind delete cluster --name {{.CLUSTER}}
+
+  k8s:load:
+    desc: Construye la imagen y la carga en los nodos de Kind
+    deps: [docker:build]
+    cmds:
+      - kind load docker-image {{.IMAGE}}:{{.TAG}} --name {{.CLUSTER}}
+
+  k8s:deploy:
+    desc: "Despliega la versión actual en un entorno (task k8s:deploy ENV=dev|prod)"
+    deps: [k8s:load]
+    cmds:
+      - kubectl --context {{.KUBE_CONTEXT}} create namespace {{.NAMESPACE}} --dry-run=client -o yaml | kubectl --context {{.KUBE_CONTEXT}} apply -f -
+      - mkdir -p k8s/.deploy/{{.ENV}}
+      - |
+        printf '%s\n' \
+          'apiVersion: kustomize.config.k8s.io/v1beta1' \
+          'kind: Kustomization' \
+          'resources:' \
+          '  - ../../overlays/{{.ENV}}' \
+          'images:' \
+          '  - name: {{.IMAGE}}' \
+          '    newTag: "{{.TAG}}"' > k8s/.deploy/{{.ENV}}/kustomization.yaml
+      - kubectl --context {{.KUBE_CONTEXT}} apply -k k8s/.deploy/{{.ENV}}
+      - kubectl --context {{.KUBE_CONTEXT}} -n {{.NAMESPACE}} rollout status deployment/observability-api --timeout=180s
+
+  k8s:status:
+    desc: Muestra los recursos de un entorno (ENV=dev|prod)
+    cmds:
+      - kubectl --context {{.KUBE_CONTEXT}} -n {{.NAMESPACE}} get deploy,rs,pods,svc,hpa,pdb,cm -o wide
+
+  k8s:history:
+    desc: Historial de revisiones del Deployment (ENV=dev|prod)
+    cmds:
+      - kubectl --context {{.KUBE_CONTEXT}} -n {{.NAMESPACE}} rollout history deployment/observability-api
+
+  k8s:port-forward:
+    desc: Expone la API en http://localhost:8080 (ENV=dev|prod)
+    cmds:
+      - kubectl --context {{.KUBE_CONTEXT}} -n {{.NAMESPACE}} port-forward svc/observability-api 8080:80

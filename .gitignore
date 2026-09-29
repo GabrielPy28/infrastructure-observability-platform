@@ -43,3 +43,6 @@ kubeconfig
 .idea/
 .DS_Store
 Thumbs.db
+
+# --- Kustomize: overlays temporales con el tag de imagen de cada despliegue ---
+k8s/.deploy/

@@ -1,0 +1,11 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: observability-api
+spec:
+  # maxUnavailable (y no minAvailable) para no bloquear el drenado de nodos
+  # cuando un entorno corre con una sola réplica.
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: observability-api

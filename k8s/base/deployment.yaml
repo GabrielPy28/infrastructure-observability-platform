@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: observability-api
+spec:
+  # Sin "replicas": el HPA es el dueño del número de réplicas.
+  # Si se declarara aquí, cada "kubectl apply" lo resetearía.
+  revisionHistoryLimit: 5
+  # Si el rollout no progresa en 120s se marca como fallido (ProgressDeadlineExceeded).
+  progressDeadlineSeconds: 120
+  # Un pod nuevo debe estar Ready 5s antes de considerarse disponible.
+  minReadySeconds: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Nunca se retira un pod sano antes de que el nuevo esté Ready:
+      # una versión rota se queda atascada y la anterior sigue sirviendo.
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: observability-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: observability-api
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api
+          # Sin tag a propósito: lo fija cada despliegue (task k8s:deploy / pipeline de CD).
+          image: observability-api
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: observability-api-config
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        # Único directorio editable: el resto del sistema de archivos es de solo lectura.
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi

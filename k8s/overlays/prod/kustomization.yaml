@@ -1,0 +1,26 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# El namespace lo crea la plataforma (Terraform en la Fase 3), no la aplicación.
+namespace: observability-prod
+
+resources:
+  - ../../base
+
+configMapGenerator:
+  - name: observability-api-config
+    behavior: merge
+    literals:
+      - APP_ENV=production
+
+patches:
+  - target:
+      kind: HorizontalPodAutoscaler
+      name: observability-api
+    patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 2
+      - op: replace
+        path: /spec/maxReplicas
+        value: 4

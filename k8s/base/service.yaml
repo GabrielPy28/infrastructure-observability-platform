@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: observability-api
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: observability-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

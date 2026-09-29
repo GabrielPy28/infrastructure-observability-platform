@@ -1,0 +1,7 @@
+# Finales de línea LF en todo el repositorio: los scripts, manifiestos y el
+# código se ejecutan en Linux (contenedores, Kind, GitHub Actions).
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.db  binary
