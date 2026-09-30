@@ -18,7 +18,7 @@ concurrency:
 env:
   TERRAFORM_VERSION: "1.16.4"
   TASK_VERSION: "3.53.1"
-  TRIVY_VERSION: "v0.66.0"
+  TRIVY_VERSION: "v0.74.0"
   # Debe coincidir con la versión de kind que incluye el provider tehcyx/kind.
   KIND_VERSION: "v0.31.0"
   KIND_SHA256: "eb244cbafcc157dff60cf68693c14c9a75c4e6e6fedaf9cd71c58117cb93e3fa"
