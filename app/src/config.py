@@ -10,6 +10,7 @@ class Settings:
     db_path: Path
     app_version: str
     environment: str
+    api_key: str | None
 
 
 def get_settings() -> Settings:
@@ -17,4 +18,6 @@ def get_settings() -> Settings:
         db_path=Path(os.getenv("DB_PATH", "data/infra.db")),
         app_version=os.getenv("APP_VERSION", "dev"),
         environment=os.getenv("APP_ENV", "local"),
+        # Inyectada desde el Secret de Kubernetes; sin ella la API queda abierta (desarrollo local).
+        api_key=os.getenv("API_KEY") or None,
     )
