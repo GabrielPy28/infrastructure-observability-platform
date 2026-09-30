@@ -7,6 +7,8 @@ vars:
   TAG:
     sh: git describe --always --dirty --abbrev=7
   CLUSTER: devops-platform
+  TF_LAYERS: cluster addons envs/dev envs/prod
+  TF_LAYERS_REVERSE: envs/prod envs/dev addons cluster
   # Contexto explícito en cada kubectl: nunca se opera por accidente sobre otro cluster.
   KUBE_CONTEXT: kind-devops-platform
   ENV: '{{.ENV | default "dev"}}'
@@ -81,19 +83,57 @@ tasks:
     cmds:
       - docker run --rm --read-only --tmpfs /tmp -p 8000:8000 {{.IMAGE}}:{{.TAG}}
 
-  # --- Kubernetes (Kind) ---
-  k8s:cluster:create:
-    desc: Crea el cluster Kind del proyecto (en la Fase 3 lo hará Terraform)
+  # --- Terraform ---
+  # Orden de las capas: cluster -> addons -> entornos. Cada una tiene su propio state.
+  tf:fmt:
+    desc: Formatea todo el código Terraform
     cmds:
-      - kind create cluster --name {{.CLUSTER}} --wait 90s
-    status:
-      - kubectl config get-contexts {{.KUBE_CONTEXT}}
+      - terraform fmt -recursive terraform
 
-  k8s:cluster:delete:
-    desc: Elimina el cluster Kind del proyecto
+  tf:validate:
+    desc: Verifica formato y valida todas las capas (sin tocar ningún state)
     cmds:
-      - kind delete cluster --name {{.CLUSTER}}
+      - terraform fmt -recursive -check terraform
+      - for: { var: TF_LAYERS }
+        cmd: terraform -chdir=terraform/{{.ITEM}} init -input=false -backend=false > /dev/null && terraform -chdir=terraform/{{.ITEM}} validate
 
+  tf:plan:
+    desc: "Muestra el plan de una capa (task tf:plan LAYER=cluster|addons|envs/dev|envs/prod)"
+    requires: { vars: [LAYER] }
+    cmds:
+      - terraform -chdir=terraform/{{.LAYER}} init -input=false > /dev/null
+      - terraform -chdir=terraform/{{.LAYER}} plan
+
+  tf:apply:
+    desc: "Aplica una capa (task tf:apply LAYER=...); pide confirmación"
+    requires: { vars: [LAYER] }
+    interactive: true
+    cmds:
+      - terraform -chdir=terraform/{{.LAYER}} init -input=false > /dev/null
+      - terraform -chdir=terraform/{{.LAYER}} apply {{.CLI_ARGS}}
+
+  tf:destroy:
+    desc: "Destruye una capa (task tf:destroy LAYER=...); pide confirmación"
+    requires: { vars: [LAYER] }
+    interactive: true
+    cmds:
+      - terraform -chdir=terraform/{{.LAYER}} destroy {{.CLI_ARGS}}
+
+  tf:up:
+    desc: "Crea toda la plataforma en orden (añade '-- -auto-approve' para no confirmar)"
+    cmds:
+      - for: { var: TF_LAYERS }
+        task: tf:apply
+        vars: { LAYER: "{{.ITEM}}" }
+
+  tf:down:
+    desc: "Destruye toda la plataforma en orden inverso (añade '-- -auto-approve' para no confirmar)"
+    cmds:
+      - for: { var: TF_LAYERS_REVERSE }
+        task: tf:destroy
+        vars: { LAYER: "{{.ITEM}}" }
+
+  # --- Kubernetes (aplicación) ---
   k8s:load:
     desc: Construye la imagen y la carga en los nodos de Kind
     deps: [docker:build]
@@ -103,8 +143,10 @@ tasks:
   k8s:deploy:
     desc: "Despliega la versión actual en un entorno (task k8s:deploy ENV=dev|prod)"
     deps: [k8s:load]
+    preconditions:
+      - sh: kubectl --context {{.KUBE_CONTEXT}} get namespace {{.NAMESPACE}}
+        msg: "El namespace {{.NAMESPACE}} no existe. Créalo con: task tf:apply LAYER=envs/{{.ENV}}"
     cmds:
-      - kubectl --context {{.KUBE_CONTEXT}} create namespace {{.NAMESPACE}} --dry-run=client -o yaml | kubectl --context {{.KUBE_CONTEXT}} apply -f -
       - mkdir -p k8s/.deploy/{{.ENV}}
       - |
         printf '%s\n' \
@@ -132,3 +174,9 @@ tasks:
     desc: Expone la API en http://localhost:8080 (ENV=dev|prod)
     cmds:
       - kubectl --context {{.KUBE_CONTEXT}} -n {{.NAMESPACE}} port-forward svc/observability-api 8080:80
+
+  k8s:api-key:
+    desc: Muestra la API key del entorno (generada por Terraform) (ENV=dev|prod)
+    cmds:
+      - terraform -chdir=terraform/envs/{{.ENV}} output -raw api_key
+    silent: true

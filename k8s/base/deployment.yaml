@@ -43,6 +43,10 @@ spec:
           envFrom:
             - configMapRef:
                 name: observability-api-config
+            # Creado por Terraform (terraform/modules/platform): si no existe,
+            # el pod no arranca. La plataforma debe existir antes que la app.
+            - secretRef:
+                name: observability-api-secrets
           readinessProbe:
             httpGet:
               path: /readyz

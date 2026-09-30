@@ -1,12 +1,13 @@
 """Infrastructure Monitoring API."""
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.responses import JSONResponse
 
 from . import db
 from .config import get_settings
 from .routers import datacenters, deployments, incidents, servers
 from .schemas import Health
+from .security import require_api_key
 
 settings = get_settings()
 description = """
@@ -62,10 +63,13 @@ app = FastAPI(
     },
 )
 
-app.include_router(datacenters.router)
-app.include_router(servers.router)
-app.include_router(incidents.router)
-app.include_router(deployments.router)
+# Los endpoints de datos requieren API key para proteger el acceso
+# a la información de infraestructura. /healthz y /readyz quedan
+# abiertos porque son endpoints operacionales destinados a determinar
+# si el proceso está vivo y si puede recibir tráfico, y deben poder
+# ser consultados directamente por Kubernetes sin autenticación.
+for router in (datacenters.router, servers.router, incidents.router, deployments.router):
+    app.include_router(router, dependencies=[Depends(require_api_key)])
 
 
 @app.get("/healthz", response_model=Health, tags=["health"])
