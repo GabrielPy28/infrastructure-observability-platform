@@ -1,0 +1,148 @@
+# CI: valida cada Pull Request antes de que pueda integrarse en main.
+# Los jobs se ejecutan en paralelo; todos deben pasar (required status checks).
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  TERRAFORM_VERSION: "1.16.4"
+  TASK_VERSION: "3.53.1"
+  TRIVY_VERSION: "v0.66.0"
+  KUBECONFORM_VERSION: "v0.8.0"
+  KUBECONFORM_SHA256: "9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883"
+  KUBERNETES_VERSION: "1.35.0"
+
+jobs:
+  app:
+    name: App · lint & tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: app/requirements*.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Lint (ruff)
+        run: |
+          ruff check . ../scripts
+          ruff format --check . ../scripts
+
+      - name: Tests (pytest)
+        run: pytest
+
+  docker:
+    name: Docker · lint, build & scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Lint Dockerfile (hadolint)
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
+        with:
+          dockerfile: app/Dockerfile
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: app
+          load: true
+          push: false
+          tags: observability-api:ci
+          build-args: APP_VERSION=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Scan image vulnerabilities (Trivy)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          scan-type: image
+          image-ref: observability-api:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+  terraform:
+    name: Terraform · fmt, validate & lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: ${{ env.TASK_VERSION }}
+
+      - uses: terraform-linters/setup-tflint@6ffdbaa3be476b3431f7275c26966ef32ff60337 # v6.3.2
+
+      - name: Format & validate all layers
+        run: task tf:validate
+
+      - name: Lint (tflint)
+        run: |
+          tflint --init --config "$PWD/.tflint.hcl"
+          tflint --recursive --config "$PWD/.tflint.hcl" --format compact
+
+  kubernetes:
+    name: Kubernetes · manifest validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install kubeconform
+        run: |
+          curl -sSLo kubeconform.tar.gz \
+            "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          echo "${KUBECONFORM_SHA256}  kubeconform.tar.gz" | sha256sum --check
+          tar -xzf kubeconform.tar.gz -C "$RUNNER_TEMP" kubeconform
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Validate rendered overlays against the Kubernetes schema
+        run: |
+          for env in dev prod; do
+            echo "::group::overlay $env"
+            kubectl kustomize "k8s/overlays/$env" \
+              | kubeconform -strict -summary -kubernetes-version "$KUBERNETES_VERSION" -
+            echo "::endgroup::"
+          done
+
+  iac-security:
+    name: Security · IaC misconfigurations
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Scan Terraform, Kubernetes & Dockerfile (Trivy)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          scan-type: config
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: "1"

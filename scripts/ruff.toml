@@ -1,0 +1,7 @@
+# Hereda la configuración de la aplicación.
+extend = "../app/pyproject.toml"
+
+[lint]
+# Scripts de operaciones: invocan kubectl/terraform con argumentos fijos y
+# solo hacen peticiones HTTP a localhost (port-forward).
+extend-ignore = ["S310", "S603", "S607"]

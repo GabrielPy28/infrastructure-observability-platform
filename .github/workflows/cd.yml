@@ -1,0 +1,154 @@
+# CD: cada merge en main publica la imagen y la valida de extremo a extremo
+# en un cluster efímero creado con Terraform dentro del runner.
+name: CD
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Nunca se cancela un despliegue a medias; los siguientes esperan su turno.
+concurrency:
+  group: cd
+  cancel-in-progress: false
+
+env:
+  TERRAFORM_VERSION: "1.16.4"
+  TASK_VERSION: "3.53.1"
+  TRIVY_VERSION: "v0.66.0"
+  # Debe coincidir con la versión de kind que incluye el provider tehcyx/kind.
+  KIND_VERSION: "v0.31.0"
+  KIND_SHA256: "eb244cbafcc157dff60cf68693c14c9a75c4e6e6fedaf9cd71c58117cb93e3fa"
+
+jobs:
+  publish:
+    name: Build, scan & publish image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Image name and tag (commit SHA)
+        id: meta
+        run: |
+          # GHCR exige nombres en minúsculas.
+          echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/observability-api" >> "$GITHUB_OUTPUT"
+          echo "tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: app
+          load: true
+          push: false
+          tags: ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
+          build-args: APP_VERSION=${{ steps.meta.outputs.tag }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Puerta de seguridad: una imagen vulnerable nunca llega al registro.
+      - name: Scan image vulnerabilities (Trivy)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          scan-type: image
+          image-ref: ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Push image to GHCR
+        run: docker push "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}"
+
+  e2e:
+    name: E2E · ephemeral Kind cluster (dev → prod)
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    env:
+      IMAGE: ${{ needs.publish.outputs.image }}
+      TAG: ${{ needs.publish.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          # Sin wrapper: "terraform output -raw" debe devolver el valor limpio.
+          terraform_wrapper: false
+
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: ${{ env.TASK_VERSION }}
+
+      - name: Install kind CLI (for image loading)
+        run: |
+          curl -sSLo kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          echo "${KIND_SHA256}  kind" | sha256sum --check
+          install -m 0755 kind "$RUNNER_TEMP/kind"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Se prueba exactamente el artefacto publicado, no una reconstrucción.
+      - name: Pull published image
+        run: docker pull "$IMAGE:$TAG"
+
+      - name: Provision platform (Terraform)
+        run: task tf:up -- -auto-approve -no-color
+
+      - name: Load image into Kind nodes
+        run: kind load docker-image "$IMAGE:$TAG" --name devops-platform
+
+      - name: Deploy to dev
+        run: task k8s:apply ENV=dev IMAGE="$IMAGE" TAG="$TAG"
+
+      - name: Smoke test dev
+        run: task k8s:smoke ENV=dev TAG="$TAG"
+
+      - name: Promote to prod
+        run: task k8s:apply ENV=prod IMAGE="$IMAGE" TAG="$TAG"
+
+      - name: Smoke test prod
+        run: task k8s:smoke ENV=prod TAG="$TAG"
+
+      - name: Diagnostics
+        if: failure()
+        run: |
+          for ns in observability-dev observability-prod; do
+            echo "::group::$ns"
+            kubectl get all,events -n "$ns" || true
+            kubectl describe pods -n "$ns" || true
+            kubectl logs -n "$ns" -l app.kubernetes.io/name=observability-api --tail=50 --all-containers || true
+            echo "::endgroup::"
+          done
+
+      - name: Tear down platform (Terraform)
+        if: always()
+        run: task tf:down -- -auto-approve -no-color
