@@ -2,10 +2,13 @@ version: "3"
 
 vars:
   APP_DIR: app
-  IMAGE: observability-api
+  # IMAGE y TAG se pueden sobrescribir (el CD usa la imagen publicada en GHCR):
+  #   task k8s:apply IMAGE=ghcr.io/<owner>/observability-api TAG=<sha>
+  IMAGE: '{{.IMAGE | default "observability-api"}}'
   # SHA del commit; "-dirty" si hay cambios sin commitear (la imagen no es reproducible).
-  TAG:
+  GIT_TAG:
     sh: git describe --always --dirty --abbrev=7
+  TAG: "{{.TAG | default .GIT_TAG}}"
   CLUSTER: devops-platform
   TF_LAYERS: cluster addons envs/dev envs/prod
   TF_LAYERS_REVERSE: envs/prod envs/dev addons cluster
@@ -141,8 +144,13 @@ tasks:
       - kind load docker-image {{.IMAGE}}:{{.TAG}} --name {{.CLUSTER}}
 
   k8s:deploy:
-    desc: "Despliega la versión actual en un entorno (task k8s:deploy ENV=dev|prod)"
+    desc: "Construye, carga en Kind y despliega la versión actual (task k8s:deploy ENV=dev|prod)"
     deps: [k8s:load]
+    cmds:
+      - task: k8s:apply
+
+  k8s:apply:
+    desc: "Despliega IMAGE:TAG sin construir; si el rollout falla, revierte a la revisión anterior"
     preconditions:
       - sh: kubectl --context {{.KUBE_CONTEXT}} get namespace {{.NAMESPACE}}
         msg: "El namespace {{.NAMESPACE}} no existe. Créalo con: task tf:apply LAYER=envs/{{.ENV}}"
@@ -155,10 +163,22 @@ tasks:
           'resources:' \
           '  - ../../overlays/{{.ENV}}' \
           'images:' \
-          '  - name: {{.IMAGE}}' \
+          '  - name: observability-api' \
+          '    newName: {{.IMAGE}}' \
           '    newTag: "{{.TAG}}"' > k8s/.deploy/{{.ENV}}/kustomization.yaml
       - kubectl --context {{.KUBE_CONTEXT}} apply -k k8s/.deploy/{{.ENV}}
-      - kubectl --context {{.KUBE_CONTEXT}} -n {{.NAMESPACE}} rollout status deployment/observability-api --timeout=180s
+      - |
+        kubectl --context {{.KUBE_CONTEXT}} -n {{.NAMESPACE}} rollout status deployment/observability-api --timeout=180s || {
+          echo "Rollout fallido: revirtiendo a la revisión anterior"
+          kubectl --context {{.KUBE_CONTEXT}} -n {{.NAMESPACE}} rollout undo deployment/observability-api
+          kubectl --context {{.KUBE_CONTEXT}} -n {{.NAMESPACE}} rollout status deployment/observability-api --timeout=180s
+          exit 1
+        }
+
+  k8s:smoke:
+    desc: "Smoke test del entorno: salud, versión desplegada, API key y datos (ENV=dev|prod)"
+    cmds:
+      - "{{.PYTHON}} scripts/smoke_test.py --env {{.ENV}} --context {{.KUBE_CONTEXT}} --expected-version {{.TAG}}"
 
   k8s:status:
     desc: Muestra los recursos de un entorno (ENV=dev|prod)

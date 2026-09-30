@@ -1,0 +1,38 @@
+# Mantiene al día las dependencias (incluidos los SHA de las GitHub Actions).
+# Cada actualización llega como un PR que debe pasar el CI.
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  - package-ecosystem: pip
+    directory: /app
+    schedule:
+      interval: weekly
+    groups:
+      python:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directory: /app
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: terraform
+    directories:
+      - /terraform/cluster
+      - /terraform/addons
+      - /terraform/envs/dev
+      - /terraform/envs/prod
+      - /terraform/modules/platform
+    schedule:
+      interval: weekly
+    groups:
+      terraform-providers:
+        patterns: ["*"]

@@ -18,6 +18,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     DB_PATH=/app/data/infra.db \
     APP_VERSION=${APP_VERSION}
 
+# Parches de seguridad de Debian publicados después de la imagen base
+# (el escaneo de Trivy en CI bloquea CVE HIGH/CRITICAL con parche disponible).
+RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+
 # UID numérico: permite que Kubernetes verifique runAsNonRoot.
 RUN groupadd --system --gid 10001 app \
     && useradd --system --uid 10001 --gid app --no-create-home app
