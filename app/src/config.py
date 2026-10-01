@@ -11,6 +11,7 @@ class Settings:
     app_version: str
     environment: str
     api_key: str | None
+    simulate_readiness_failure: bool
 
 
 def get_settings() -> Settings:
@@ -20,4 +21,6 @@ def get_settings() -> Settings:
         environment=os.getenv("APP_ENV", "local"),
         # Inyectada desde el Secret de Kubernetes; sin ella la API queda abierta (desarrollo local).
         api_key=os.getenv("API_KEY") or None,
+        # Solo para el escenario de "mal despliegue": la versión nunca pasa a Ready.
+        simulate_readiness_failure=os.getenv("SIMULATE_READINESS_FAILURE", "").lower() == "true",
     )

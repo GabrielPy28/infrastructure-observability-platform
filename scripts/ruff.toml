@@ -3,5 +3,6 @@ extend = "../app/pyproject.toml"
 
 [lint]
 # Scripts de operaciones: invocan kubectl/terraform con argumentos fijos y
-# solo hacen peticiones HTTP a localhost (port-forward).
-extend-ignore = ["S310", "S603", "S607"]
+# solo hacen peticiones HTTP a localhost (port-forward). S108: "/tmp" aparece
+# como ruta de montaje de volúmenes emptyDir en manifiestos de pods.
+extend-ignore = ["S108", "S310", "S603", "S607"]
