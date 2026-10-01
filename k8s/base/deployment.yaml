@@ -25,6 +25,20 @@ spec:
       labels:
         app.kubernetes.io/name: observability-api
     spec:
+      # Reparte las réplicas entre nodos: la caída de un nodo no tumba el servicio.
+      # ScheduleAnyway (preferencia, no obligación) para que un drain pueda
+      # mover réplicas aunque solo quede un nodo disponible.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: observability-api
+          # El reparto se calcula solo entre pods de la misma revisión: durante un
+          # rolling update, los pods antiguos (a punto de irse) no lo desequilibran.
+          matchLabelKeys:
+            - pod-template-hash
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: 30
       securityContext:
@@ -40,6 +54,15 @@ spec:
           ports:
             - name: http
               containerPort: 8000
+          lifecycle:
+            # Al terminar un pod, Kubernetes envía SIGTERM y, en paralelo, lo retira
+            # de los endpoints del Service. Hasta que kube-proxy actualiza las reglas
+            # de cada nodo le pueden llegar conexiones nuevas que uvicorn ya no
+            # aceptaría. La pausa lo mantiene sirviendo mientras el cambio se propaga
+            # (queda dentro de terminationGracePeriodSeconds: 30).
+            preStop:
+              sleep:
+                seconds: 5
           envFrom:
             - configMapRef:
                 name: observability-api-config

@@ -5,9 +5,22 @@ vars:
   # IMAGE y TAG se pueden sobrescribir (el CD usa la imagen publicada en GHCR):
   #   task k8s:apply IMAGE=ghcr.io/<owner>/observability-api TAG=<sha>
   IMAGE: '{{.IMAGE | default "observability-api"}}'
-  # SHA del commit; "-dirty" si hay cambios sin commitear (la imagen no es reproducible).
+  # SHA del commit. Con cambios sin commitear en app/ (el contexto de la imagen):
+  # <sha>-dirty-<hash del contenido de app/>, calculado con un índice temporal
+  # de git (no toca el staging). Dos builds distintos nunca comparten tag; si lo
+  # hicieran, Kubernetes no vería cambios en el Deployment y no desplegaría nada.
   GIT_TAG:
-    sh: git describe --always --dirty --abbrev=7
+    sh: |
+      head=$(git rev-parse --short=7 HEAD)
+      if [ -z "$(git status --porcelain -- app)" ]; then
+        echo "$head"
+      else
+        export GIT_INDEX_FILE="$(git rev-parse --git-dir)/image-tag.index"
+        rm -f "$GIT_INDEX_FILE"
+        git -c core.safecrlf=false add -A app
+        echo "$head-dirty-$(git rev-parse --short=7 "$(git write-tree)")"
+        rm -f "$GIT_INDEX_FILE"
+      fi
   TAG: "{{.TAG | default .GIT_TAG}}"
   CLUSTER: devops-platform
   TF_LAYERS: cluster addons envs/dev envs/prod
@@ -200,3 +213,32 @@ tasks:
     cmds:
       - terraform -chdir=terraform/envs/{{.ENV}} output -raw api_key
     silent: true
+
+  # --- Escenarios de resiliencia (entorno prod) ---
+  scenario:healthy:
+    desc: "Escenario 1: despliegue sano (réplicas, reparto entre nodos, disponibilidad)"
+    cmds:
+      - "{{.PYTHON}} scripts/scenarios/healthy.py"
+
+  scenario:pod-failure:
+    desc: "Escenario 2: eliminación de un pod y drain de un nodo sin pérdida de servicio"
+    cmds:
+      - "{{.PYTHON}} scripts/scenarios/pod_failure.py"
+
+  scenario:bad-deploy:
+    desc: "Escenario 3: despliegue defectuoso, rollout detenido y rollback"
+    cmds:
+      - "{{.PYTHON}} scripts/scenarios/bad_deploy.py"
+
+  scenario:autoscaling:
+    desc: "Escenario 4: autoescalado del HPA bajo carga generada con k6"
+    cmds:
+      - "{{.PYTHON}} scripts/scenarios/autoscaling.py"
+
+  scenario:all:
+    desc: Ejecuta los cuatro escenarios en orden
+    cmds:
+      - task: scenario:healthy
+      - task: scenario:pod-failure
+      - task: scenario:bad-deploy
+      - task: scenario:autoscaling

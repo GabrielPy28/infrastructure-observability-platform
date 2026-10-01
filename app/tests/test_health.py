@@ -18,3 +18,10 @@ def test_readiness_fails_without_database(client, monkeypatch, tmp_path):
 def test_liveness_does_not_depend_on_database(client, monkeypatch, tmp_path):
     monkeypatch.setenv("DB_PATH", str(tmp_path / "missing.db"))
     assert client.get("/healthz").status_code == 200
+
+
+def test_simulated_readiness_failure(client, monkeypatch):
+    """Escenario de mal despliegue: la versión nunca pasa a Ready, pero sigue viva."""
+    monkeypatch.setenv("SIMULATE_READINESS_FAILURE", "true")
+    assert client.get("/readyz").status_code == 503
+    assert client.get("/healthz").status_code == 200

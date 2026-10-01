@@ -82,7 +82,7 @@ def liveness():
 @app.get("/readyz", response_model=Health, tags=["health"], responses={503: {"model": Health}})
 def readiness():
     """Readiness: el pod puede recibir tráfico solo si la base de datos responde."""
-    if not db.is_ready():
+    if get_settings().simulate_readiness_failure or not db.is_ready():
         return JSONResponse(
             status_code=503,
             content=Health(

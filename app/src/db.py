@@ -16,7 +16,11 @@ SORT_ORDERS = {"asc": "ASC", "desc": "DESC"}
 
 def connect() -> sqlite3.Connection:
     db_path = get_settings().db_path.resolve()
-    connection = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro&immutable=1", uri=True)
+    # check_same_thread=False: FastAPI ejecuta dependencias y endpoints síncronos
+    # en un pool de hilos, así que la conexión puede abrirse en un hilo y usarse
+    # en otro. Es seguro: cada conexión la usa una sola petición a la vez y la
+    # base es de solo lectura.
+    connection = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro&immutable=1", uri=True, check_same_thread=False)
     connection.row_factory = sqlite3.Row
     return connection
 
