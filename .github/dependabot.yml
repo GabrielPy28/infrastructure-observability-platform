@@ -30,6 +30,7 @@ updates:
       - /terraform/addons
       - /terraform/envs/dev
       - /terraform/envs/prod
+      - /terraform/aws/eks
       - /terraform/modules/platform
     schedule:
       interval: weekly

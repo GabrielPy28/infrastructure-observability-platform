@@ -25,6 +25,8 @@ vars:
   CLUSTER: devops-platform
   TF_LAYERS: cluster addons envs/dev envs/prod
   TF_LAYERS_REVERSE: envs/prod envs/dev addons cluster
+  # El módulo de AWS/EKS se valida pero nunca se aplica (no está en tf:up/tf:down).
+  TF_VALIDATE_LAYERS: cluster addons envs/dev envs/prod aws/eks
   # Contexto explícito en cada kubectl: nunca se opera por accidente sobre otro cluster.
   KUBE_CONTEXT: kind-devops-platform
   ENV: '{{.ENV | default "dev"}}'
@@ -110,7 +112,7 @@ tasks:
     desc: Verifica formato y valida todas las capas (sin tocar ningún state)
     cmds:
       - terraform fmt -recursive -check terraform
-      - for: { var: TF_LAYERS }
+      - for: { var: TF_VALIDATE_LAYERS }
         cmd: terraform -chdir=terraform/{{.ITEM}} init -input=false -backend=false > /dev/null && terraform -chdir=terraform/{{.ITEM}} validate
 
   tf:plan:
