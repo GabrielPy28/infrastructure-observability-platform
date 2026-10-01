@@ -1,0 +1,7 @@
+# Excepciones del escaneo de Trivy. Cada una debe estar justificada.
+
+# AWS-0104 — Egress sin restricciones en el security group de los nodos EKS.
+# Requerido para descargar imágenes de GHCR y acceder a APIs de AWS
+# mediante NAT. Al no disponer de IPs fijas, se mantiene egress abierto.
+# El tráfico de los pods se restringirá mediante NetworkPolicies y VPC endpoints.
+AWS-0104

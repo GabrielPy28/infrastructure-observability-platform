@@ -1,0 +1,7 @@
+# Copiar como backend.hcl (ignorado por git) y ajustar el bucket.
+# El bucket debe existir antes del primer init, con versionado activado.
+bucket       = "<tu-bucket-de-state>"
+key          = "infrastructure-observability-platform/eks/terraform.tfstate"
+region       = "us-east-1"
+encrypt      = true
+use_lockfile = true

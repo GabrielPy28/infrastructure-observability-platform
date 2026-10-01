@@ -25,6 +25,8 @@ htmlcov/
 crash.log
 *.tfvars
 !*.tfvars.example
+# Configuración real del backend S3 (terraform/aws/eks); se versiona solo el .example
+backend.hcl
 override.tf
 override.tf.json
 *_override.tf
