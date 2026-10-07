@@ -3,4 +3,4 @@
 -r requirements-seed.txt
 pytest==9.1.1
 httpx2==2.13.1
-ruff==0.16.9
+ruff==0.16.10
